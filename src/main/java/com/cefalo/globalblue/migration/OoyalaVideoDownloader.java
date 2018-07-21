@@ -8,6 +8,7 @@ import org.jdom2.Element;
 
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,14 +28,16 @@ public class OoyalaVideoDownloader {
     public static void main(String[] args) {
         //download();
         //updateContentUrl();
-        listCurlCommands();
+        //listCurlCommands();
         //getRedirectUrl("http://api.ooyala.com/syndication/stream_redirect?pcode=Jxb28663ef9GxvZq830juSPFtD48&expires=1532151123&streamID=10832331&signature=XmmnSJ0DyLaoG8QzLCLBs%2FG7Xmz4IOpvRQUuHqvH0g0&size=3562553&length=25000");
-
+        List<OoyalaVideo> videos = getVideoInfos();
+        updateOoyalaVideo(videos);
+        listCurlCommands(videos);
     }
 
     private static void download() {
         try {
-            ExecutorService pool = Executors.newFixedThreadPool(10);
+            ExecutorService pool = Executors.newFixedThreadPool(20);
             for (OoyalaVideo video : getVideoInfos()) {
                 pool.submit(new DownloadTask(video.getContentUrl(), video.getFileName()));
             }
@@ -46,44 +49,48 @@ public class OoyalaVideoDownloader {
         }
     }
 
-    private static String getRedirectUrl(String originalUrl) {
+    private static void updateOoyalaVideo(List<OoyalaVideo> videos) {
         try {
-            URL obj = new URL(originalUrl);
-
-            HttpURLConnection conn = (HttpURLConnection) obj.openConnection();
-
-            conn.setReadTimeout(5000);
-            conn.setInstanceFollowRedirects(false);
-            conn.addRequestProperty("Accept-Language", "en-US,en;q=0.8");
-            conn.addRequestProperty("User-Agent", "Mozilla");
-
-            boolean redirect = false;
-
-            // normally, 3xx is redirect
-            int status = conn.getResponseCode();
-            if (status != HttpURLConnection.HTTP_OK) {
-                if (status == HttpURLConnection.HTTP_MOVED_TEMP
-                        || status == HttpURLConnection.HTTP_MOVED_PERM
-                        || status == HttpURLConnection.HTTP_SEE_OTHER)
-                    redirect = true;
+            ExecutorService pool = Executors.newFixedThreadPool(10);
+            for (OoyalaVideo video : videos) {
+                pool.submit(new UpdateUrlTask(video));
             }
+            pool.shutdown();
 
-           // System.out.println("Response Code ... " + status);
+            pool.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
 
-            if (redirect) {
+    private static String redirectUrl(String url) {
+        URL urlTmp = null;
+        String redUrl = null;
+        HttpURLConnection connection = null;
 
-                // get redirect url from "location" header field
-                String newUrl = conn.getHeaderField("Location");
+        try {
+            urlTmp = new URL(url);
+        } catch (MalformedURLException e1) {
+            e1.printStackTrace();
+        }
 
-                return newUrl;
-
-            }
-        } catch (Exception e) {
+        try {
+            connection = (HttpURLConnection) urlTmp.openConnection();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
+            connection.getResponseCode();
+        } catch (IOException e) {
             e.printStackTrace();
         }
 
-        return originalUrl;
+        redUrl = connection.getURL().toString();
+        connection.disconnect();
+
+        return redUrl;
     }
+
 
     private static List<OoyalaVideo> getVideoInfos() {
         List<OoyalaVideo> videos = new ArrayList<>();
@@ -150,18 +157,19 @@ public class OoyalaVideoDownloader {
         return videos;
     }
 
-    private static void updateContentUrl() {
+    private static void updateContentUrls() {
         getVideoInfos().forEach(v -> {
-            v.setContentUrl(getRedirectUrl(v.getContentUrl()));
+            v.setContentUrl(redirectUrl(v.getContentUrl()));
         });
     }
 
 
-
-    private static void listCurlCommands() {
-        getVideoInfos().forEach(v -> {
-            System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl()));
-        });
+    private static void listCurlCommands(List<OoyalaVideo> videos) {
+        if (videos == null || videos.size() == 0) {
+            getVideoInfos().forEach(v -> System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl())));
+        } else {
+            videos.forEach(v -> System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl())));
+        }
     }
 
     public static void downloadFile(String fileURL, String fileName) throws IOException {
@@ -205,6 +213,27 @@ public class OoyalaVideoDownloader {
         httpConn.disconnect();
     }
 
+    private static void updateContentUrl(OoyalaVideo video) {
+        video.setContentUrl(redirectUrl(video.getContentUrl()));
+    }
+
+    private static class UpdateUrlTask implements Runnable {
+
+        private OoyalaVideo video;
+
+        public UpdateUrlTask(OoyalaVideo video) {
+            this.video = video;
+        }
+
+        @Override
+        public void run() {
+            try {
+                updateContentUrl(this.video);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     private static class DownloadTask implements Runnable {
 
