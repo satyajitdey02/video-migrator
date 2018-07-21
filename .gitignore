@@ -1,0 +1,35 @@
+# Created by .ignore support plugin (hsz.mobi)
+# Intellij Project Files
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Class & Package Files
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven Project Files
+overlays/
+target/
+dependency-reduced-pom.xml
+
+# Unstructured resources
+node_modules
+.sass-cache
+unstructured/frontend/static/theme/global-blue/base/css/
+unstructured/frontend/static/node_modules
+
+# OS related Files
+.DS_Store
+._.DS_Store
+
+# Vim temp files
+ *~
+ *.swp
+ *.swo
+*/dependency-reduced-pom.xml
+_nul
+*.releaseBackup
