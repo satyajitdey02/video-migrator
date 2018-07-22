@@ -102,7 +102,12 @@ public class OoyalaVideo {
     }
 
     public String getFileName() {
-        String descriptionOrTitle = StringUtils.isBlank(this.getDescription()) ? this.getTitle() : this.getDescription();
+        String descriptionOrTitle = this.getDescription();
+        if (StringUtils.isBlank(this.getDescription()) || this.getDescription().length() > 200) {
+            descriptionOrTitle = this.getTitle();
+        }
+        descriptionOrTitle.replaceAll("/", ".");
+
         String publications = String.join(".", this.publications);
         return String.format("%s---%s---%s.mp4", descriptionOrTitle, this.getGuid(), publications);
     }

@@ -3,8 +3,11 @@ package com.cefalo.globalblue.migration;
 import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
 import com.rometools.rome.io.SyndFeedInput;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.jdom2.Element;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.net.HttpURLConnection;
@@ -16,31 +19,30 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+
 /**
  * Created by satyajit on 7/20/18.
  */
 public class OoyalaVideoDownloader {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(OoyalaVideoDownloader.class);
+
     private static final String OOYALA_SYNDICATION_URL = "http://cdn-api.ooyala.com/syndication/mp4?id=ad6928a3-07ac-48ff-862b-269641a4c1e3";
     private static final int BUFFER_SIZE = 4096;
-    private static String VIDEO_DIR = "/home/satyajit/Media/Ooyala";
+    private static String VIDEO_DIR = "/home/satyajit/Media/OoyalaVideo";
+    private static int NTHREAD = 4;
+    private static List<OoyalaVideo> videos = new ArrayList<>();
 
     public static void main(String[] args) {
-        //download();
-        //updateContentUrl();
-        //listCurlCommands();
-        //getRedirectUrl("http://api.ooyala.com/syndication/stream_redirect?pcode=Jxb28663ef9GxvZq830juSPFtD48&expires=1532151123&streamID=10832331&signature=XmmnSJ0DyLaoG8QzLCLBs%2FG7Xmz4IOpvRQUuHqvH0g0&size=3562553&length=25000");
-        List<OoyalaVideo> videos = getVideoInfos();
-        updateOoyalaVideo(videos);
-        listCurlCommands(videos);
+        loadVideoInfos();
+        updateOoyalaVideo();
+        download();
     }
 
     private static void download() {
         try {
-            ExecutorService pool = Executors.newFixedThreadPool(20);
-            for (OoyalaVideo video : getVideoInfos()) {
-                pool.submit(new DownloadTask(video.getContentUrl(), video.getFileName()));
-            }
+            ExecutorService pool = Executors.newFixedThreadPool(NTHREAD);
+            videos.forEach(v -> pool.submit(new DownloadTask(v.getContentUrl(), v.getFileName())));
             pool.shutdown();
 
             pool.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
@@ -49,14 +51,12 @@ public class OoyalaVideoDownloader {
         }
     }
 
-    private static void updateOoyalaVideo(List<OoyalaVideo> videos) {
+    private static void updateOoyalaVideo() {
         try {
-            ExecutorService pool = Executors.newFixedThreadPool(10);
-            for (OoyalaVideo video : videos) {
-                pool.submit(new UpdateUrlTask(video));
-            }
-            pool.shutdown();
+            ExecutorService pool = Executors.newFixedThreadPool(NTHREAD);
+            videos.forEach(v -> pool.submit(new UpdateUrlTask(v)));
 
+            pool.shutdown();
             pool.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -92,20 +92,18 @@ public class OoyalaVideoDownloader {
     }
 
 
-    private static List<OoyalaVideo> getVideoInfos() {
-        List<OoyalaVideo> videos = new ArrayList<>();
+    private static void loadVideoInfos() {
+
         try {
             URL feedUrl = new URL(OOYALA_SYNDICATION_URL);
             SyndFeedInput input = new SyndFeedInput();
             SyndFeed feed = input.build(new InputStreamReader(feedUrl.openStream()));
             List<SyndEntry> syndEntries = feed.getEntries();
             for (SyndEntry entry : syndEntries) {
-                /*System.out.println(entry.getTitle() + "::"+entry.getUri());
-                System.out.println("---------------------------------------");*/
+
                 try {
                     OoyalaVideo video = new OoyalaVideo();
                     video.setTitle(entry.getTitle());
-                    //video.setDescription(entry.getDescription().getValue());
                     video.setGuid(entry.getUri());
 
                     List<Element> foreignMarkups = entry.getForeignMarkup();
@@ -134,7 +132,6 @@ public class OoyalaVideoDownloader {
                                     String url = element1.getAttribute("url").getValue();
                                     if (StringUtils.isNotBlank(url)) {
                                         video.setContentUrl(url);
-                                        //System.out.println(url);
                                     }
 
                                 }
@@ -143,77 +140,42 @@ public class OoyalaVideoDownloader {
                     }
                     videos.add(video);
                 } catch (Exception e) {
+                    LOGGER.error("Error.", e);
                     System.out.println("Entry: " + entry);
                 }
-
-
             }
 
-
         } catch (Exception e) {
+            LOGGER.error("Error.", e);
             e.printStackTrace();
         }
 
-        return videos;
+
     }
 
     private static void updateContentUrls() {
-        getVideoInfos().forEach(v -> {
-            v.setContentUrl(redirectUrl(v.getContentUrl()));
-        });
+        videos.forEach(v -> v.setContentUrl(redirectUrl(v.getContentUrl())));
     }
 
 
-    private static void listCurlCommands(List<OoyalaVideo> videos) {
-        if (videos == null || videos.size() == 0) {
-            getVideoInfos().forEach(v -> System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl())));
-        } else {
-            videos.forEach(v -> System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl())));
+    private static void listCurlCommands() {
+        videos.forEach(v -> System.out.println(String.format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(), v.getContentUrl())));
+    }
+
+    private static void downloadVideo(String fileURL, String filePath) {
+        try {
+            FileUtils.copyURLToFile(new URL(fileURL),
+                    new File(filePath), 100000, 100000);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
-    public static void downloadFile(String fileURL, String fileName) throws IOException {
-        URL url = new URL(fileURL);
-        HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
-        int responseCode = httpConn.getResponseCode();
-        // always check HTTP response code first
-        if (responseCode == HttpURLConnection.HTTP_OK) {
-
-            String disposition = httpConn.getHeaderField("Content-Disposition");
-            String contentType = httpConn.getContentType();
-            int contentLength = httpConn.getContentLength();
-
-
-            System.out.println("Content-Type = " + contentType);
-            System.out.println("Content-Disposition = " + disposition);
-            System.out.println("Content-Length = " + contentLength);
-            System.out.println("fileName = " + fileName);
-
-            // opens input stream from the HTTP connection
-            InputStream inputStream = httpConn.getInputStream();
-            String saveFilePath = VIDEO_DIR + File.separator + fileName;
-
-            // opens an output stream to save into file
-            FileOutputStream outputStream = new FileOutputStream(saveFilePath);
-
-            int bytesRead = -1;
-            byte[] buffer = new byte[BUFFER_SIZE];
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, bytesRead);
-            }
-
-            outputStream.close();
-            inputStream.close();
-
-            System.out.println("File downloaded");
-        } else {
-            System.out.println("No file to download. Server replied HTTP code: " + responseCode);
-        }
-
-        httpConn.disconnect();
-    }
 
     private static void updateContentUrl(OoyalaVideo video) {
+        if (StringUtils.isBlank(video.getContentUrl())) {
+            return;
+        }
         video.setContentUrl(redirectUrl(video.getContentUrl()));
     }
 
@@ -230,6 +192,7 @@ public class OoyalaVideoDownloader {
             try {
                 updateContentUrl(this.video);
             } catch (Exception e) {
+                LOGGER.error("Error updating video: " + video.getFileName(), e);
                 e.printStackTrace();
             }
         }
@@ -248,8 +211,12 @@ public class OoyalaVideoDownloader {
         @Override
         public void run() {
             try {
-                downloadFile(this.fileUrl, this.fileName);
-            } catch (IOException e) {
+                System.out.println(String.format("START::Downloading: %s from: %s", this.fileName, this.fileUrl));
+                downloadVideo(this.fileUrl, String.format("%s%s%s", VIDEO_DIR, File.separator, this.fileName));
+                LOGGER.debug(String.format("END::Downloaded: %s", this.fileName));
+                System.out.println(String.format("END::Downloaded: %s", this.fileName));
+            } catch (Exception e) {
+                LOGGER.error("Error downloading video.", e);
                 e.printStackTrace();
             }
         }
