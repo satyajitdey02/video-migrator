@@ -106,7 +106,7 @@ public class OoyalaVideo {
         if (StringUtils.isBlank(this.getDescription()) || this.getDescription().length() > 200) {
             descriptionOrTitle = this.getTitle();
         }
-        descriptionOrTitle.replaceAll("/", ".");
+        descriptionOrTitle.replaceAll("\\/", ".").replaceAll("\\\\",".").replaceAll("\n", " ");
 
         String publications = String.join(".", this.publications);
         return String.format("%s---%s---%s.mp4", descriptionOrTitle, this.getGuid(), publications);
