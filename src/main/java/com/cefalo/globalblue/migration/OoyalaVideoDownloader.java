@@ -4,17 +4,26 @@ import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
 import com.rometools.rome.io.SyndFeedInput;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.jdom2.Element;
@@ -29,11 +38,15 @@ public class OoyalaVideoDownloader {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(OoyalaVideoDownloader.class);
 
-  private static final String OOYALA_SYNDICATION_URL = "http://cdn-api.ooyala.com/syndication/mp4?id=ad6928a3-07ac-48ff-862b-269641a4c1e3";
-  private static final int BUFFER_SIZE = 4096;
-  private static String VIDEO_DIR = "/home/satyajit/Media/OoyalaVideo";
+  private static final String OOYALA_SYNDICATION_URL_OLD = "http://cdn-api.ooyala.com/syndication/mp4?id=ad6928a3-07ac-48ff-862b-269641a4c1e3";
+  private static final String OOYALA_SYNDICATION_URL_NEW = "http://cdn-api.ooyala.com/syndication/mp4?id=ad6928a3-07ac-48ff-862b-269641a4c1e3&offset=0&limit=1000";
+  private static String VIDEO_DIR = "/Users/satyajit/Media/vzaar";
   private static int NTHREAD = 4;
-  private static List<OoyalaVideo> videos = new ArrayList<>();
+
+  private static SortedSet<OoyalaVideo> videosOld = new TreeSet<>(Comparator.comparing(OoyalaVideo::getGuid));
+  private static SortedSet<OoyalaVideo> videosNew = new TreeSet<>(Comparator.comparing(OoyalaVideo::getGuid));
+  private static SortedSet<OoyalaVideo> videosDiff = new TreeSet<>(Comparator.comparing(OoyalaVideo::getGuid));
+
   private static List<String> MISSING_VIDEOS = Arrays.asList("00M3ZpdDoxp-JbQJfY5fCpRX81KcSYZ1",
       "5oZzVvMDE6XYKMZeY7znvDlRIXRicMuh",
       "8yaDVvMDE6Ww9JQKhNlfegk8DOR_DMWt",
@@ -48,20 +61,52 @@ public class OoyalaVideoDownloader {
       "VxNzZuMDE63BQex5iguR9WIOosIAmMVd");
 
   public static void main(String[] args) {
-    loadVideoInfos();
-    updateOoyalaVideo();
-    videos.forEach(v -> {
-      System.out.println(v.getFileName());
+    try {
+      InputStream input500Stream = new FileInputStream(
+          "/Users/satyajit/Media/vzaar/ooyala500.xml");
+      InputStreamReader file500Reader = new InputStreamReader(input500Stream);
+      loadVideoInfos(file500Reader, videosOld);
+
+      InputStream input629Stream = new FileInputStream(
+          "/Users/satyajit/Media/vzaar/ooyala629.xml");
+      InputStreamReader file629Reader = new InputStreamReader(input629Stream);
+      loadVideoInfos(file629Reader, videosNew);
+      findDiffs();
+      updateOoyalaVideo();
+      //listCurlCommands();
+      //showVideoInfo();
+      download();
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+
+
+  }
+
+  private static void findDiffs() {
+    //Collection<OoyalaVideo> diffs = CollectionUtils.subtract(videosOld, videosNew);
+    videosNew.removeAll(videosOld);
+    videosDiff.addAll(videosNew);
+
+    /*videosOld.removeAll(videosNew);
+    videosDiff.addAll(videosOld);*/
+  }
+
+
+  private static void showVideoInfo() {
+    //videosDiff.sort(Comparator.comparing(OoyalaVideo::getGuid));
+    videosDiff.forEach(v -> {
+      System.out.println(v.getGuid());
+      /*System.out.println(v.getFileName());
       System.out.println(v.getContentUrl());
-      System.out.println("------------------------------------------");
+      System.out.println("------------------------------------------");*/
     });
-    //download();
   }
 
   private static void download() {
     try {
       ExecutorService pool = Executors.newFixedThreadPool(NTHREAD);
-      videos.forEach(v -> pool.submit(new DownloadTask(v.getContentUrl(), v.getFileName())));
+      videosDiff.forEach(v -> pool.submit(new DownloadTask(v.getContentUrl(), v.getFileName())));
       pool.shutdown();
 
       pool.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
@@ -73,7 +118,7 @@ public class OoyalaVideoDownloader {
   private static void updateOoyalaVideo() {
     try {
       ExecutorService pool = Executors.newFixedThreadPool(NTHREAD);
-      videos.forEach(v -> pool.submit(new UpdateUrlTask(v)));
+      videosDiff.forEach(v -> pool.submit(new UpdateUrlTask(v)));
 
       pool.shutdown();
       pool.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
@@ -111,23 +156,19 @@ public class OoyalaVideoDownloader {
   }
 
 
-  private static void loadVideoInfos() {
+  private static void loadVideoInfos(InputStreamReader reader, Set<OoyalaVideo> oVideos) {
 
     try {
-      URL feedUrl = new URL(OOYALA_SYNDICATION_URL);
       SyndFeedInput input = new SyndFeedInput();
-      SyndFeed feed = input.build(new InputStreamReader(feedUrl.openStream()));
+      SyndFeed feed = input.build(reader);
       List<SyndEntry> syndEntries = feed.getEntries();
       for (SyndEntry entry : syndEntries) {
 
         try {
-          if(!MISSING_VIDEOS.contains(entry.getUri())) {
-            continue;
-          }
+
           OoyalaVideo video = new OoyalaVideo();
           video.setTitle(entry.getTitle());
           video.setGuid(entry.getUri());
-
 
           List<Element> foreignMarkups = entry.getForeignMarkup();
           for (Element element : foreignMarkups) {
@@ -163,7 +204,7 @@ public class OoyalaVideoDownloader {
               }
             }
           }
-          videos.add(video);
+          oVideos.add(video);
         } catch (Exception e) {
           LOGGER.error("Error.", e);
           System.out.println("Entry: " + entry);
@@ -179,17 +220,21 @@ public class OoyalaVideoDownloader {
   }
 
   private static void updateContentUrls() {
-    videos.forEach(v -> v.setContentUrl(redirectUrl(v.getContentUrl())));
+    videosOld.forEach(v -> v.setContentUrl(redirectUrl(v.getContentUrl())));
   }
 
 
   private static void listCurlCommands() {
-    videos.forEach(v -> System.out.println(String
+    videosDiff.forEach(v -> System.out.println(String
         .format("wget  -O \"/home/satyajit/Media/Ooyala/%s\" \"%s\"", v.getFileName(),
             v.getContentUrl())));
   }
 
   private static void downloadVideo(String fileURL, String filePath) {
+    if (StringUtils.isBlank(fileURL)) {
+      System.out.println("File URL blank for: " + filePath);
+      return;
+    }
     try {
       FileUtils.copyURLToFile(new URL(fileURL),
           new File(filePath), 100000, 100000);
